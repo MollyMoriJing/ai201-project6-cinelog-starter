@@ -7,8 +7,8 @@ tests/test_collection.py (same fixtures, same assertion style).
 
 import pytest
 from app import create_app, db
-from models import User, Film
-from services.watchlist_service import add_to_watchlist
+from models import User, Film, WatchlistEntry
+from services.watchlist_service import add_to_watchlist, AlreadyInWatchlistError
 from services.collection_service import FilmNotFoundError
 
 
@@ -44,6 +44,43 @@ def sample_film(app):
         db.session.add(film)
         db.session.commit()
         return film.id
+
+
+# ── Basic add ────────────────────────────────────────────────────────────────
+
+def test_add_to_watchlist_creates_entry(app, sample_user, sample_film):
+    """Adding a valid film should create a WatchlistEntry in the database."""
+    with app.app_context():
+        entry = add_to_watchlist(user_id=sample_user, film_id=sample_film)
+
+        assert entry is not None
+        assert entry.user_id == sample_user
+        assert entry.film_id == sample_film
+        assert entry.public is True  # default visibility (see Comment 4)
+
+        in_db = WatchlistEntry.query.filter_by(
+            user_id=sample_user, film_id=sample_film
+        ).first()
+        assert in_db is not None
+
+
+# ── Deduplication ────────────────────────────────────────────────────────────
+
+def test_add_to_watchlist_duplicate_raises(app, sample_user, sample_film):
+    """
+    Adding the same film twice should raise AlreadyInWatchlistError and leave
+    exactly one entry — locks in the deduplication added for Comment 2.
+    """
+    with app.app_context():
+        add_to_watchlist(user_id=sample_user, film_id=sample_film)
+
+        with pytest.raises(AlreadyInWatchlistError):
+            add_to_watchlist(user_id=sample_user, film_id=sample_film)
+
+        count = WatchlistEntry.query.filter_by(
+            user_id=sample_user, film_id=sample_film
+        ).count()
+        assert count == 1
 
 
 # ── Nonexistent film ─────────────────────────────────────────────────────────
